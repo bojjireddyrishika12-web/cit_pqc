@@ -1,40 +1,63 @@
-# SPDX-FileCopyrightText: © 2024 Tiny Tapeout
+# SPDX-FileCopyrightText: 2024 Bojjireddy Rishika
 # SPDX-License-Identifier: Apache-2.0
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import Timer, ClockCycles
 
+def ntt_butterfly(x, w=3, q=17):
+    """Expected NTT output: (x * w) mod q"""
+    return (x * w) % q
 
 @cocotb.test()
 async def test_project(dut):
-    dut._log.info("Start")
+    """NTT-Based PQC Core Verification"""
+    dut._log.info("Starting NTT Core Verification...")
 
-    # Set the clock period to 10 us (100 KHz)
-    clock = Clock(dut.clk, 10, unit="us")
-    cocotb.start_soon(clock.start())
+    # Start clock: 20ns period = 50MHz
+    cocotb.start_soon(Clock(dut.clk, 20, units="ns").start())
 
-    # Reset
-    dut._log.info("Reset")
-    dut.ena.value = 1
-    dut.ui_in.value = 0
+    # Apply reset
+    dut.rst_n.value  = 0
+    dut.ui_in.value  = 0
     dut.uio_in.value = 0
-    dut.rst_n.value = 0
-    await ClockCycles(dut.clk, 10)
+    dut.ena.value    = 1
+
+    await Timer(40, units="ns")   # Hold reset 2 cycles
     dut.rst_n.value = 1
+    await Timer(20, units="ns")   # 1 cycle settle
 
-    dut._log.info("Test project behavior")
+    # Test vectors: (x * 3) mod 17
+    test_vectors = [
+        0x00,   # 0  → 0
+        0x01,   # 1  → 3
+        0x05,   # 5  → 15
+        0x06,   # 6  → 1  (18 mod 17)
+        0x10,   # 16 → 14 (48 mod 17)
+        0x0A,   # 10 → 13 (30 mod 17)
+        0x04,   # 4  → 12
+        0x03,   # 3  → 9
+    ]
 
-    # Set the input values you want to test
-    dut.ui_in.value = 20
-    dut.uio_in.value = 30
+    for ui_val in test_vectors:
+        expected = ntt_butterfly(ui_val)
 
-    # Wait for one clock cycle to see the output values
-    await ClockCycles(dut.clk, 1)
+        dut.ui_in.value = ui_val
+        await ClockCycles(dut.clk, 2)
 
-    # The following assersion is just an example of how to check the output values.
-    # Change it to match the actual expected output of your module:
-    assert dut.uo_out.value == 50
+        got = int(dut.uo_out.value)
+        assert got == expected, \
+            f"FAIL: ui_in=0x{ui_val:02X}({ui_val}) → got {got}, expected {expected}"
 
-    # Keep testing the module by changing the input values, waiting for
-    # one or more clock cycles, and asserting the expected output values.
+        # Check status flags: ready=1, done=1
+        status = int(dut.uio_out.value) & 0x03
+        assert status == 0x03, \
+            f"FAIL: Status flags wrong, uio_out=0x{int(dut.uio_out.value):02X}"
+
+        # Check output enables
+        assert int(dut.uio_oe.value) == 0x03, \
+            f"FAIL: uio_oe expected 0x03, got 0x{int(dut.uio_oe.value):02X}"
+
+        dut._log.info(f"PASS: ui_in={ui_val} → ntt_out={got} ✓")
+
+    dut._log.info("All NTT verification checks passed!")
