@@ -1,27 +1,54 @@
 /*
- * Copyright (c) 2024 Your Name
- * SPDX-License-Identifier: Apache-2.0
+ * project.v - 8-Bit NTT-Based PQC Core
  */
-
 `default_nettype none
 
 module tt_um_example (
-    input  wire [7:0] ui_in,    // Dedicated inputs
-    output wire [7:0] uo_out,   // Dedicated outputs
-    input  wire [7:0] uio_in,   // IOs: Input path
-    output wire [7:0] uio_out,  // IOs: Output path
-    output wire [7:0] uio_oe,   // IOs: Enable path (active high: 0=input, 1=output)
-    input  wire       ena,      // always 1 when the design is powered, so you can ignore it
-    input  wire       clk,      // clock
-    input  wire       rst_n     // reset_n - low to reset
+    input  wire [7:0] ui_in,    // 8-bit input data
+    output wire [7:0] uo_out,   // 8-bit NTT output
+    input  wire [7:0] uio_in,   // Bidirectional inputs (unused)
+    output wire [7:0] uio_out,  // Status outputs
+    output wire [7:0] uio_oe,   // Output enables
+    input  wire       ena,      // Enable
+    input  wire       clk,      // Clock
+    input  wire       rst_n     // Active-low reset
 );
 
-  // All output pins must be assigned. If not used, assign to 0.
-  assign uo_out  = ui_in + uio_in;  // Example: ou_out is the sum of ui_in and uio_in
-  assign uio_out = 0;
-  assign uio_oe  = 0;
+    // NTT Parameters: prime q=17, primitive root w=3
+    // For 8-bit demo: single butterfly unit
+    // Output = (input * w) mod q
+    // w=3, q=17
 
-  // List all unused inputs to prevent warnings
-  wire _unused = &{ena, clk, rst_n, 1'b0};
+    reg [7:0] ntt_out;
+    reg ready_flag;
+    reg done_flag;
+
+    // NTT Butterfly: y = (x * 3) mod 17
+    function [7:0] ntt_butterfly;
+        input [7:0] x;
+        reg [15:0] product;
+        begin
+            product = x * 8'd3;
+            ntt_butterfly = product % 8'd17;
+        end
+    endfunction
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ntt_out    <= 8'h00;
+            ready_flag <= 1'b0;
+            done_flag  <= 1'b0;
+        end else begin
+            ready_flag <= 1'b1;
+            ntt_out    <= ntt_butterfly(ui_in);
+            done_flag  <= 1'b1;
+        end
+    end
+
+    assign uo_out  = ntt_out;
+    assign uio_out = {6'b0, done_flag, ready_flag};
+    assign uio_oe  = 8'b0000_0011;
+
+    wire _unused = &{ena, uio_in, 1'b0};
 
 endmodule
